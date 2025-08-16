@@ -1,0 +1,100 @@
+#!/bin/sh
+# ~/.local/bin/dwmstatus
+#
+
+SEP=";"
+INTERVAL=1    # تحديث كل ثانية (أصغر لو تحب، لكن لا تقل كثيرًا)
+
+# Helpers
+command_exists() { command -v "$1" >/dev/null 2>&1; }
+
+get_volume() {
+    if command_exists amixer; then
+        vol=$(amixer get Master 2>/dev/null | awk -F'[][]' '/%/ {print $2; exit}')
+        mute=$(amixer get Master 2>/dev/null | grep '\[off\]' || true)
+        if [ -n "$mute" ]; then
+            echo "Vol: MUTE"
+        else
+            echo "Vol: ${vol%%%}"  # remove possible extra %
+        fi
+    else
+        echo "Vol: N/A"
+    fi
+}
+
+# CPU load (1-min) and temp
+get_cpu_and_temp() {
+    # loadavg first field with 2 decimals
+    load=$(awk '{printf "%.2f", $1}' /proc/loadavg)
+    # temp from sensors (may vary by machine)
+    if command_exists sensors; then
+        temp=$(sensors 2>/dev/null | awk '/^Package id 0:/{gsub(/\+|°C/,"",$4); print $4; exit}')
+        [ -z "$temp" ] && temp=$(sensors 2>/dev/null | awk '/^Core 0:/{gsub(/\+|°C/,"",$3); print $3; exit}')
+    else
+        temp=""
+    fi
+    if [ -n "$temp" ]; then
+        echo "CPU : ${load} - ${temp}°C"
+    else
+        echo "CPU : ${load} - N/A"
+    fi
+}
+
+get_kblayout() {
+    # Best-effort: use xkblayout-state or xkb-switch if available; fallback to setxkbmap first token
+    if command_exists xkblayout-state; then
+        xkblayout-state print "%s" 2>/dev/null || echo "??"
+    elif command_exists xkb-switch; then
+        xkb-switch -p 2>/dev/null || echo "??"
+    else
+        # fallback: pick the active index if setxkbmap lists multiple layouts it usually lists "layout: us,ara"
+        layout=$(setxkbmap -query 2>/dev/null | awk '/layout/ {print $2}')
+        # If it's a comma-separated list, try to guess active with xset -q? fallback to first
+        echo "${layout%%,*}" | tr '[:lower:]' '[:upper:]'
+    fi
+}
+
+get_datetime() {
+    date '+%a %d %b - %H:%M'
+}
+
+get_battery() {
+    # reads first battery found
+    bat_path=$(ls /sys/class/power_supply/ 2>/dev/null | grep -E '^BAT' | head -n1)
+    if [ -n "$bat_path" ]; then
+        cap=$(cat /sys/class/power_supply/"$bat_path"/capacity 2>/dev/null)
+        stat=$(cat /sys/class/power_supply/"$bat_path"/status 2>/dev/null)
+        [ -n "$cap" ] && printf "Bat: %s%% %s" "$cap" "${stat:-}"
+    else
+        echo "Bat: N/A"
+    fi
+}
+
+get_center() {
+    # example: recording indicator
+    if pgrep -x ffmpeg >/dev/null 2>&1; then
+        echo "REC"
+    else
+        echo ""
+    fi
+}
+
+# update function (will be callable by trap)
+update() {
+    center="$(get_center)"
+    right="$(get_volume) | $(get_cpu_and_temp) | $(get_kblayout) | $(get_datetime) | $(get_battery)"
+    xsetroot -name "${center} ${SEP} ${right}"
+}
+
+# trap USR1 to force immediate update
+trap 'update' USR1
+
+# initial update
+update
+
+# main loop — update periodically
+while true; do
+    sleep "$INTERVAL"
+    update
+done
+
