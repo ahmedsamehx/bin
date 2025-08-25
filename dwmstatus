@@ -34,9 +34,26 @@ get_cpu_and_temp() {
         temp=""
     fi
     if [ -n "$temp" ]; then
-        echo "CPU : ${load} - ${temp}°C"
+        echo "CPU: ${load} - ${temp}°C"
     else
-        echo "CPU : ${load} - N/A"
+        echo "CPU: ${load} - N/A"
+    fi
+}
+
+
+get_datetime() {
+    date '+%a %d %b - %H:%M'
+}
+
+get_battery() {
+    # reads first battery found
+    bat_path=$(ls /sys/class/power_supply/ 2>/dev/null | grep -E '^BAT' | head -n1)
+    if [ -n "$bat_path" ]; then
+        cap=$(cat /sys/class/power_supply/"$bat_path"/capacity 2>/dev/null)
+        stat=$(cat /sys/class/power_supply/"$bat_path"/status 2>/dev/null)
+        [ -n "$cap" ] && printf "%s%% %s" "$cap" "${stat:-}"
+    else
+        echo "Bat: N/A"
     fi
 }
 
@@ -54,35 +71,29 @@ get_kblayout() {
     fi
 }
 
-get_datetime() {
-    date '+%a %d %b - %H:%M'
-}
-
-get_battery() {
-    # reads first battery found
-    bat_path=$(ls /sys/class/power_supply/ 2>/dev/null | grep -E '^BAT' | head -n1)
-    if [ -n "$bat_path" ]; then
-        cap=$(cat /sys/class/power_supply/"$bat_path"/capacity 2>/dev/null)
-        stat=$(cat /sys/class/power_supply/"$bat_path"/status 2>/dev/null)
-        [ -n "$cap" ] && printf "Bat: %s%% %s" "$cap" "${stat:-}"
-    else
-        echo "Bat: N/A"
-    fi
-}
-
 get_center() {
-    # example: recording indicator
-    if pgrep -x ffmpeg >/dev/null 2>&1; then
-        echo "REC"
-    else
-        echo ""
+    pidfile="/tmp/screencast.pid"
+    
+    if [ -f "$pidfile" ]; then
+        pid=$(cat "$pidfile" 2>/dev/null)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            printf "🔴 REC"
+            return
+        fi
     fi
+
+    if pgrep -x ffmpeg >/dev/null 2>&1; then
+        printf "🔴 REC"
+    else
+        printf ""
+    fi
+
 }
 
 # update function (will be callable by trap)
 update() {
     center="$(get_center)"
-    right="$(get_volume) | $(get_cpu_and_temp) | $(get_kblayout) | $(get_datetime) | $(get_battery)"
+    right="$(get_volume) | $(get_cpu_and_temp) | $(get_datetime) | $(get_battery) | $(get_kblayout)"
     xsetroot -name "${center} ${SEP} ${right}"
 }
 
